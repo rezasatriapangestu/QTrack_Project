@@ -3,6 +3,7 @@
 namespace App\Filament\Pages;
 
 use App\Models\Service;
+use App\Services\QueueService;
 use App\Services\ThermalPrinterService;
 use Filament\Pages\Page;
 
@@ -14,19 +15,32 @@ class QueueKiosk extends Page
 
     protected static string $layout = 'filament.layouts.base-kiosk';
 
+    protected static ?string $navigationLabel = 'Kiosk Cetak Antrian';
+
+    protected ThermalPrinterService $thermalPrinterService;
+
+    protected QueueService $queueService;
+
+    public function __construct()
+    {
+        $this->thermalPrinterService = app(ThermalPrinterService::class);
+
+        $this->queueService = app(QueueService::class);
+    }
+
     public function getViewData(): array
     {
         return [
-            'services' => Service::where('is_active', true)->get(),
+            'services' => Service::where('is_active', true)->get()
         ];
     }
 
     public function print($serviceId)
     {
-        $printerService = app(ThermalPrinterService::class);
+        $newQueue = $this->queueService->addQueue($serviceId);
 
-        $text = $printerService->createText([
-            ['text' => 'Puskemas Example', 'align' => 'center'],
+        $text = $this->thermalPrinterService->createText([
+            ['text' => 'Bank Muamalat', 'align' => 'center'],
             ['text' => 'Jalan Coba No. 123', 'align' => 'center'],
             ['text' => '-----------------', 'align' => 'center'],
             ['text' => 'NOMOR ANTRIAN', 'align' => 'center'],
@@ -39,4 +53,3 @@ class QueueKiosk extends Page
         $this->dispatch("print-start", $text);
     }
 }
-

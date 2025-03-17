@@ -5,12 +5,17 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\CounterResource\Pages;
 use App\Filament\Resources\CounterResource\RelationManagers;
 use App\Models\Counter;
+use App\Services\QueueService;
 use Filament\Forms;
 use Filament\Forms\Form;
+use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Tables;
+use Filament\Tables\Actions\Action;
+use Filament\Tables\Columns\Summarizers\Count;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletingScope;
 
 class CounterResource extends Resource
@@ -22,6 +27,21 @@ class CounterResource extends Resource
     protected static ?string $navigationIcon = 'heroicon-o-hashtag';
 
     protected static ?string $navigationGroup = 'Administrasi';
+
+    // public static function canCreate(): bool
+    // {
+    //     return auth()->user()->role === 'admin';
+    // }
+
+    // public static function canEdit(Model $record): bool
+    // {
+    //     return auth()->user()->role === 'admin';
+    // }
+
+    // public static function canDelete(Model $record): bool
+    // {
+    //     return auth()->user()->role === 'admin';
+    // }
 
     public static function form(Form $form): Form
     {
@@ -43,11 +63,19 @@ class CounterResource extends Resource
         return $table
             ->columns([
                 Tables\Columns\TextColumn::make('name')
+                    ->label('Nama')
                     ->searchable(),
-                Tables\Columns\TextColumn::make('service_id')
-                    ->numeric()
+                Tables\Columns\TextColumn::make('service.name')
+                    ->label('Layanan')
+                    ->sortable(),
+                Tables\Columns\TextColumn::make('activeQueue.number')
+                    ->label('Nomor Antrian Saat ini')
+                    ->searchable(),
+                Tables\Columns\TextColumn::make('activeQueue.status')
+                    ->label('Status Antrian')
                     ->sortable(),
                 Tables\Columns\IconColumn::make('is_active')
+                    ->label('Status Aktif')
                     ->boolean(),
                 Tables\Columns\TextColumn::make('created_at')
                     ->dateTime()
@@ -64,12 +92,17 @@ class CounterResource extends Resource
             ->actions([
                 Tables\Actions\EditAction::make(),
                 Tables\Actions\DeleteAction::make(),
+                self::getCallNextQueueAction(),
+                self::getServeQueueAction(),
+                self::getFinishQueueAction(),
+                self::getCancelQueueAction()
             ])
             ->bulkActions([
                 Tables\Actions\BulkActionGroup::make([
                     Tables\Actions\DeleteBulkAction::make(),
                 ]),
-            ]);
+            ])
+            ->poll('3s');
     }
 
     public static function getPages(): array
@@ -77,5 +110,69 @@ class CounterResource extends Resource
         return [
             'index' => Pages\ManageCounters::route('/'),
         ];
+    }
+
+    private static function getCallNextQueueAction()
+    {
+        return Action::make('callNextQueue')
+            ->button()
+            ->visible(fn(Counter $record) => $record->hasNextQueue)
+            ->action(function (Counter $record, $livewire) {
+                $nextQueue = app(QueueService::class)->callNextQueue($record->id);
+
+                if (!$nextQueue) {
+                    Notification::make()
+                        ->title('No queue available')
+                        ->danger()
+                        ->send();
+
+                    return;
+                }
+
+                $livewire->dispatch("queue-called", "Nomor Antrian " . $nextQueue->number . " segera ke " . $record->name);
+            })
+            ->label("Panggil")
+            ->icon("heroicon-o-speaker-wave");
+    }
+
+    private static function getServeQueueAction()
+    {
+        return Action::make('serve')
+            ->label('Layani')
+            ->button()
+            ->color('success')
+            ->icon('heroicon-o-check-circle')
+            ->action(function (Counter $record) {
+                app(QueueService::class)->serveQueue($record->activeQueue);
+            })
+            ->requiresConfirmation()
+            ->visible(fn(Counter $record) => $record->is_available && $record->activeQueue);
+    }
+
+    private static function getFinishQueueAction()
+    {
+        return Action::make('finishQueue')
+            ->label('Selesai')
+            ->button()
+            ->icon('heroicon-o-check')
+            ->action(function (Counter $record) {
+                app(QueueService::class)->finishQueue($record->activeQueue);
+            })
+            ->requiresConfirmation()
+            ->visible(fn(Counter $record) => $record->activeQueue?->status === 'serving');
+    }
+
+    private static function getCancelQueueAction()
+    {
+        return Action::make('cancelQueue')
+            ->label('Batalkan')
+            ->button()
+            ->color('danger')
+            ->icon('heroicon-o-x-circle')
+            ->action(function (Counter $record) {
+                app(QueueService::class)->cancelQueue($record->activeQueue);
+            })
+            ->requiresConfirmation()
+            ->visible(fn(Counter $record) => $record->is_available && $record->activeQueue);
     }
 }
